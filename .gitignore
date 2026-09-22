@@ -1,0 +1,14 @@
+# Compiled binaries
+/modguard
+/plcsim
+/plcclient
+*.exe
+
+# Test and coverage output
+*.out
+coverage.*
+
+# OS and editor cruft
+.DS_Store
+.vscode/
+.idea/
