@@ -1,0 +1,4 @@
+Branches are called by the feature they want to achieve.
+When the feature is tested and operate well with the main code base, its merged into main.
+
+naming convention : name-feature-with-minus-sign-between-words
