@@ -6,18 +6,23 @@ import (
 	"testing"
 )
 
-var seedFrames = [][]byte{
-	{0x00, 0x01, 0x00, 0x00, 0x00, 0x06, 0x01, 0x03, 0x00, 0x00, 0x00, 0x04},
-	{0x00, 0x02, 0x00, 0x00, 0x00, 0x06, 0x01, 0x05, 0x00, 0x00, 0xFF, 0x00},
-	{0x00, 0x03, 0x00, 0x00, 0x00, 0x0B, 0x01, 0x10, 0x00, 0x00, 0x00, 0x02, 0x04, 0x00, 0x0A, 0x01, 0x02},
-	{0x00, 0x04, 0x00, 0x00, 0x00, 0x09, 0x01, 0x0F, 0x00, 0x00, 0x00, 0x0A, 0x02, 0xCD, 0x01},
-	{0x00, 0x05, 0x00, 0x00, 0x00, 0x05, 0x01, 0x2B, 0x0E, 0x01, 0x00},
-	{0x00, 0x06, 0x00, 0x00, 0xFF, 0xFF, 0x01},
+// Seeds are the starting points the fuzzer mutates: one valid frame per
+// request shape, plus a hostile header.
+var seeds = []struct {
+	name  string
+	frame []byte
+}{
+	{"read 4 holding registers", adu(1, 1, readPDU(ReadHoldingRegisters, 0, 4))},
+	{"switch coil 0 on", adu(2, 1, writeSinglePDU(WriteSingleCoil, 0, CoilOn))},
+	{"write 2 registers", adu(3, 1, writeMultiplePDU(WriteMultipleRegisters, 0, 2, 4, registers(10, 258)))},
+	{"write 10 coils", adu(4, 1, writeMultiplePDU(WriteMultipleCoils, 0, 10, 2, []byte{0b11001101, 0b00000001}))},
+	{"read device identification", adu(5, 1, []byte{byte(EncapsulatedInterface), meiReadDeviceID, 0x01, 0x00})},
+	{"header claiming 65535 bytes", header(6, 0, 65535, 1)},
 }
 
 func FuzzReadFrame(f *testing.F) {
-	for _, s := range seedFrames {
-		f.Add(s)
+	for _, s := range seeds {
+		f.Add(s.frame)
 	}
 	f.Fuzz(func(t *testing.T, data []byte) {
 		fr, err := ReadFrame(bytes.NewReader(data))
@@ -38,8 +43,10 @@ func FuzzReadFrame(f *testing.F) {
 }
 
 func FuzzParseRequest(f *testing.F) {
-	for _, s := range seedFrames {
-		f.Add(s[HeaderLen:])
+	for _, s := range seeds {
+		if len(s.frame) > HeaderLen {
+			f.Add(s.frame[HeaderLen:])
+		}
 	}
 	f.Fuzz(func(t *testing.T, pdu []byte) {
 		req, err := ParseRequest(pdu)
