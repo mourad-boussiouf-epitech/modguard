@@ -8,6 +8,8 @@ import (
 )
 
 func TestReadFrame(t *testing.T) {
+	readHolding := readPDU(ReadHoldingRegisters, 0, 4)
+
 	tests := []struct {
 		name    string
 		in      []byte
@@ -16,73 +18,28 @@ func TestReadFrame(t *testing.T) {
 	}{
 		{
 			name: "read holding registers",
-			in:   []byte{0x00, 0x01, 0x00, 0x00, 0x00, 0x06, 0x01, 0x03, 0x00, 0x00, 0x00, 0x04},
-			want: Frame{
-				Header: Header{TransactionID: 1, Length: 6, UnitID: 1},
-				PDU:    []byte{0x03, 0x00, 0x00, 0x00, 0x04},
-			},
+			in:   adu(1, 1, readHolding),
+			want: Frame{Header: Header{TransactionID: 1, Length: 6, UnitID: 1}, PDU: readHolding},
 		},
 		{
 			name: "function code only",
-			in:   []byte{0xAB, 0xCD, 0x00, 0x00, 0x00, 0x02, 0xFF, 0x07},
-			want: Frame{
-				Header: Header{TransactionID: 0xABCD, Length: 2, UnitID: 0xFF},
-				PDU:    []byte{0x07},
-			},
+			in:   adu(0xABCD, 255, pduOf(ReadCoils)),
+			want: Frame{Header: Header{TransactionID: 0xABCD, Length: 2, UnitID: 255}, PDU: pduOf(ReadCoils)},
 		},
 		{
 			name: "largest allowed pdu",
-			in:   append([]byte{0x00, 0x01, 0x00, 0x00, 0x00, 0xFE, 0x01}, make([]byte, MaxPDULen)...),
-			want: Frame{
-				Header: Header{TransactionID: 1, Length: 254, UnitID: 1},
-				PDU:    make([]byte, MaxPDULen),
-			},
+			in:   adu(1, 1, make([]byte, MaxPDULen)),
+			want: Frame{Header: Header{TransactionID: 1, Length: 254, UnitID: 1}, PDU: make([]byte, MaxPDULen)},
 		},
-		{
-			name:    "empty stream",
-			in:      nil,
-			wantErr: io.EOF,
-		},
-		{
-			name:    "truncated header",
-			in:      []byte{0x00, 0x01, 0x00},
-			wantErr: io.ErrUnexpectedEOF,
-		},
-		{
-			name:    "truncated pdu",
-			in:      []byte{0x00, 0x01, 0x00, 0x00, 0x00, 0x06, 0x01, 0x03, 0x00},
-			wantErr: io.ErrUnexpectedEOF,
-		},
-		{
-			name:    "header only, pdu missing",
-			in:      []byte{0x00, 0x01, 0x00, 0x00, 0x00, 0x06, 0x01},
-			wantErr: io.ErrUnexpectedEOF,
-		},
-		{
-			name:    "non-zero protocol id",
-			in:      []byte{0x00, 0x01, 0x00, 0x01, 0x00, 0x02, 0x01, 0x03},
-			wantErr: ErrProtocolID,
-		},
-		{
-			name:    "length 0",
-			in:      []byte{0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x01},
-			wantErr: ErrLength,
-		},
-		{
-			name:    "length 1 has no function code",
-			in:      []byte{0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x01},
-			wantErr: ErrLength,
-		},
-		{
-			name:    "length 255 is too long",
-			in:      []byte{0x00, 0x01, 0x00, 0x00, 0x00, 0xFF, 0x01},
-			wantErr: ErrLength,
-		},
-		{
-			name:    "length 65535 is rejected before allocating",
-			in:      []byte{0x00, 0x01, 0x00, 0x00, 0xFF, 0xFF, 0x01},
-			wantErr: ErrLength,
-		},
+		{name: "empty stream", in: nil, wantErr: io.EOF},
+		{name: "truncated header", in: header(1, 0, 6, 1)[:3], wantErr: io.ErrUnexpectedEOF},
+		{name: "truncated pdu", in: adu(1, 1, readHolding)[:9], wantErr: io.ErrUnexpectedEOF},
+		{name: "header only, pdu missing", in: header(1, 0, 6, 1), wantErr: io.ErrUnexpectedEOF},
+		{name: "non-zero protocol id", in: append(header(1, 1, 2, 1), byte(ReadCoils)), wantErr: ErrProtocolID},
+		{name: "length 0", in: header(1, 0, 0, 1), wantErr: ErrLength},
+		{name: "length 1 has no function code", in: header(1, 0, 1, 1), wantErr: ErrLength},
+		{name: "length 255 is too long", in: header(1, 0, 255, 1), wantErr: ErrLength},
+		{name: "length 65535 is rejected before allocating", in: header(1, 0, 65535, 1), wantErr: ErrLength},
 	}
 
 	for _, tc := range tests {
@@ -103,10 +60,9 @@ func TestReadFrame(t *testing.T) {
 
 // TCP may deliver a frame in pieces; ReadFrame must still assemble it.
 func TestReadFrameSplitAcrossReads(t *testing.T) {
-	in := []byte{0x00, 0x01, 0x00, 0x00, 0x00, 0x06, 0x01, 0x03, 0x00, 0x00, 0x00, 0x04}
-	r := &oneByteReader{data: in}
+	in := adu(1, 1, readPDU(ReadHoldingRegisters, 0, 4))
 
-	got, err := ReadFrame(r)
+	got, err := ReadFrame(&oneByteReader{data: in})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,8 +72,8 @@ func TestReadFrameSplitAcrossReads(t *testing.T) {
 }
 
 func TestReadFramePipelined(t *testing.T) {
-	first := []byte{0x00, 0x01, 0x00, 0x00, 0x00, 0x06, 0x01, 0x03, 0x00, 0x00, 0x00, 0x04}
-	second := []byte{0x00, 0x02, 0x00, 0x00, 0x00, 0x06, 0x01, 0x04, 0x00, 0x00, 0x00, 0x07}
+	first := adu(1, 1, readPDU(ReadHoldingRegisters, 0, 4))
+	second := adu(2, 1, readPDU(ReadInputRegisters, 0, 7))
 	r := bytes.NewReader(append(append([]byte{}, first...), second...))
 
 	for i, want := range [][]byte{first, second} {
@@ -134,12 +90,21 @@ func TestReadFramePipelined(t *testing.T) {
 	}
 }
 
+// Pins the wire format byte by byte, independently of the test helpers.
 func TestBytes(t *testing.T) {
 	f := Frame{
 		Header: Header{TransactionID: 0x1234, UnitID: 0x11},
-		PDU:    []byte{0x06, 0x00, 0x01, 0x00, 0x03},
+		PDU:    writeSinglePDU(WriteSingleRegister, 1, 3),
 	}
-	want := []byte{0x12, 0x34, 0x00, 0x00, 0x00, 0x06, 0x11, 0x06, 0x00, 0x01, 0x00, 0x03}
+	want := []byte{
+		0x12, 0x34, // transaction id
+		0x00, 0x00, // protocol id
+		0x00, 0x06, // length: unit id + 5 pdu bytes
+		0x11,       // unit id
+		0x06,       // function code: write single register
+		0x00, 0x01, // address 1
+		0x00, 0x03, // value 3
+	}
 	if got := f.Bytes(); !bytes.Equal(got, want) {
 		t.Errorf("Bytes() = % X, want % X", got, want)
 	}
