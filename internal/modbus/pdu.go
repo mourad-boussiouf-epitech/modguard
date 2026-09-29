@@ -50,6 +50,15 @@ func (e ExceptionCode) Error() string {
 	return fmt.Sprintf("modbus: %s (0x%02X)", name, uint8(e))
 }
 
+// Values a write single coil request may carry.
+const (
+	CoilOff uint16 = 0x0000
+	CoilOn  uint16 = 0xFF00
+)
+
+// Addresses are 16 bits: 0 to 65535.
+const addressSpace = 1 << 16
+
 var ErrEmptyPDU = errors.New("modbus: empty pdu")
 
 // Request is a decoded request PDU. Address and Quantity are zero for
@@ -92,7 +101,7 @@ func ParseRequest(pdu []byte) (Request, error) {
 		req.Quantity = 1
 		req.Data = body[2:4]
 		if req.Function == WriteSingleCoil {
-			if v := binary.BigEndian.Uint16(req.Data); v != 0x0000 && v != 0xFF00 {
+			if v := binary.BigEndian.Uint16(req.Data); v != CoilOff && v != CoilOn {
 				return req, IllegalDataValue
 			}
 		}
@@ -149,7 +158,7 @@ func checkRange(req Request, maxQty uint16) error {
 	if req.Quantity == 0 || req.Quantity > maxQty {
 		return IllegalDataValue
 	}
-	if int(req.Address)+int(req.Quantity) > 0x10000 {
+	if int(req.Address)+int(req.Quantity) > addressSpace {
 		return IllegalDataAddress
 	}
 	return nil
